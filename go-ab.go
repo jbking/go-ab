@@ -21,8 +21,8 @@ func init() {
 
 type ResponseResult struct {
     status string
-    sec int64
-    nsec int64
+    start time.Time
+    end time.Time
 }
 
 func get(address string, url *url.URL) (string, error) {
@@ -49,16 +49,13 @@ func run(c chan *ResponseResult, address string, url *url.URL, requests int) {
         }
         end := time.Now()
 
-        sec := end.Unix() - start.Unix()
-        nsec := end.UnixNano() - start.UnixNano()
-        if nsec < 0 {
-            sec = sec - 1
-            nsec = nsec + 999999999
-        }
-
-        rr := &ResponseResult{status, sec, nsec}
+        rr := &ResponseResult{status, start, end}
         c <- rr
     }
+}
+
+func msec(t time.Time) int64 {
+    return t.Unix() * 1000 + t.UnixNano() / 1000000
 }
 
 func main() {
@@ -86,18 +83,27 @@ func main() {
         go run(c, address, ul, requests)
     }
 
-    min := math.MaxFloat64
-    max := float64(0)
+    var d int64
+    min_start := int64(math.MaxInt64)
+    max_end := int64(0)
+    sum := int64(0)
     for i := 0; i < n; i++ {
         rr := <-c
-        sec_float := float64(rr.sec) + float64(rr.nsec) / float64(1000000000)
-        if sec_float > max {
-            max = sec_float
+
+        start := msec(rr.start)
+        end := msec(rr.end)
+
+        if start < min_start {
+            min_start = start
         }
-        if sec_float < min {
-            min = sec_float
+        if end > max_end {
+            max_end = end
         }
+
+        d = end - start
+        sum = sum + d
     }
-    fmt.Printf("min: %v\n", min)
-    fmt.Printf("max: %v\n", max)
+    fmt.Printf("total time: %v [ms]\n", max_end - min_start)
+    fmt.Printf("average time: %v [ms]\n", sum / int64(n))
+    fmt.Printf("req per sec: %v [#/seq]\n", sum / (max_end - min_start))
 }
