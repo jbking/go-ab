@@ -1,11 +1,13 @@
 package main
 
 import (
+    "bufio"
     "flag"
     "fmt"
     "time"
     "log"
-    "net/http"
+    "net"
+    "net/url"
     "math"
 )
 
@@ -18,15 +20,30 @@ func init() {
 }
 
 type ResponseResult struct {
-    status int
+    status string
     sec int64
     nsec int64
 }
 
-func run(c chan *ResponseResult, url string, requests int) {
+func get(address string, url *url.URL) (string, error) {
+    conn, err := net.Dial("tcp", address)
+    if err != nil {
+        return "", err
+    }
+    defer conn.Close()
+
+    fmt.Fprintf(conn, "GET %v HTTP/1.1\r\nHost: %v\r\n\r\n", url.Path, url.Host)
+    status, err := bufio.NewReader(conn).ReadString('\n')
+    if err != nil {
+        return "", err
+    }
+    return status, nil
+}
+
+func run(c chan *ResponseResult, address string, url *url.URL, requests int) {
     for i := 0; i < requests; i++ {
         start := time.Now()
-        res, err := http.Get(url)
+        status, err := get(address, url)
         if err != nil {
             log.Fatal(err)
         }
@@ -39,7 +56,7 @@ func run(c chan *ResponseResult, url string, requests int) {
             nsec = nsec + 999999999
         }
 
-        rr := &ResponseResult{res.StatusCode, sec, nsec}
+        rr := &ResponseResult{status, sec, nsec}
         c <- rr
     }
 }
@@ -48,15 +65,27 @@ func main() {
     flag.Parse()
 
     n := requests * concurrency
-    url := flag.Arg(0)
-    if url == "" {
-        log.Fatal("Specify URL")
+    ul, err := url.Parse(flag.Arg(0))
+    if err != nil {
+        log.Fatal(err)
+    }
+    host, port, err := net.SplitHostPort(ul.Host)
+    if err != nil {
+        host = ul.Host
+        port = "80"
     }
 
+    addrs, err := net.LookupHost(host)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    address := fmt.Sprintf("%v:%v", addrs[0], port)
     c := make(chan *ResponseResult, n)
     for i := 0; i < concurrency; i++ {
-        go run(c, url, requests)
+        go run(c, address, ul, requests)
     }
+
     min := math.MaxFloat64
     max := float64(0)
     for i := 0; i < n; i++ {
